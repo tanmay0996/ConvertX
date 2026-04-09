@@ -43,7 +43,8 @@ function downloadBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
-/** Draw image onto a canvas with all effects applied, returns the canvas */
+/** Draw image onto a canvas with all effects applied, returns the canvas.
+ *  Returns null if dimensions are invalid (0, NaN, Infinity). */
 function renderToCanvas(
   img: HTMLImageElement,
   outW: number,
@@ -52,10 +53,14 @@ function renderToCanvas(
   rotation: number,
   flipH: boolean,
   flipV: boolean,
-): HTMLCanvasElement {
+): HTMLCanvasElement | null {
+  // Guard: reject zero, negative, NaN, or non-finite dimensions
+  if (!outW || !outH || outW < 1 || outH < 1 || !isFinite(outW) || !isFinite(outH)) {
+    return null;
+  }
   const canvas = document.createElement("canvas");
-  canvas.width = outW;
-  canvas.height = outH;
+  canvas.width = Math.round(outW);
+  canvas.height = Math.round(outH);
   const ctx = canvas.getContext("2d")!;
 
   // Background (transparent checkerboard handled by container; canvas is transparent)
@@ -99,6 +104,9 @@ export default function ImageEditor() {
   const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
   const [isDragging, setIsDragging] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
+  // Local string state so users can freely edit the number inputs without snapping
+  const [widthStr, setWidthStr] = useState("800");
+  const [heightStr, setHeightStr] = useState("600");
 
   const imgRef = useRef<HTMLImageElement>(null);     // hidden source <img>
   const cropImgRef = useRef<HTMLImageElement>(null); // img inside ReactCrop
@@ -115,6 +123,10 @@ export default function ImageEditor() {
     `opacity(${adj.opacity}%)`,
   ].join(" ");
 
+  // Sync string inputs when resizeW/resizeH change from outside (presets, image load)
+  useEffect(() => { setWidthStr(String(resizeW)); }, [resizeW]);
+  useEffect(() => { setHeightStr(String(resizeH)); }, [resizeH]);
+
   // ── Re-render preview canvas whenever any setting changes ──────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -124,12 +136,15 @@ export default function ImageEditor() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Canvas display size (fits in container, max 480px tall)
+    // Preview uses resizeW/resizeH aspect so the canvas visually reflects output size
+    const outW = resizeW > 0 ? resizeW : originalSize.w;
+    const outH = resizeH > 0 ? resizeH : originalSize.h;
+
     const maxH = 480;
     const maxW = canvas.parentElement?.clientWidth ?? 600;
-    const scale = Math.min(maxW / originalSize.w, maxH / originalSize.h, 1);
-    const displayW = Math.round(originalSize.w * scale);
-    const displayH = Math.round(originalSize.h * scale);
+    const scale = Math.min(maxW / outW, maxH / outH, 1);
+    const displayW = Math.round(outW * scale);
+    const displayH = Math.round(outH * scale);
 
     canvas.width = displayW;
     canvas.height = displayH;
@@ -144,7 +159,7 @@ export default function ImageEditor() {
     ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
     ctx.drawImage(img, -displayW / 2, -displayH / 2, displayW, displayH);
     ctx.restore();
-  }, [rotation, flipH, flipV, imgLoaded, originalSize]);
+  }, [rotation, flipH, flipV, imgLoaded, originalSize, resizeW, resizeH]);
 
   const handleFile = useCallback((file: File) => {
     if (!file.type.startsWith("image/")) return;
@@ -187,8 +202,26 @@ export default function ImageEditor() {
   const downloadEdited = () => {
     const img = imgRef.current;
     if (!img || !imgLoaded) return;
-    const canvas = renderToCanvas(img, resizeW, resizeH, adj, rotation, flipH, flipV);
-    canvas.toBlob((blob) => blob && downloadBlob(blob, `${fileName}_edited.png`), "image/png");
+
+    const w = Math.round(resizeW);
+    const h = Math.round(resizeH);
+    if (w < 1 || h < 1 || !isFinite(w) || !isFinite(h)) {
+      alert(`Invalid dimensions: ${w}×${h}. Please enter values between 1 and 8000.`);
+      return;
+    }
+
+    const canvas = renderToCanvas(img, w, h, adj, rotation, flipH, flipV);
+    if (!canvas) {
+      alert(`Export failed: could not create canvas at ${w}×${h}px.`);
+      return;
+    }
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        alert("Export failed: the image could not be encoded. Check browser console for details.");
+        return;
+      }
+      downloadBlob(blob, `${fileName}_${w}x${h}.png`);
+    }, "image/png");
   };
 
   const downloadCropped = () => {
@@ -198,6 +231,11 @@ export default function ImageEditor() {
     const scaleY = img.naturalHeight / img.height;
     const cw = Math.round(completedCrop.width * scaleX);
     const ch = Math.round(completedCrop.height * scaleY);
+
+    if (cw < 1 || ch < 1) {
+      alert("Crop region is too small. Please select a larger area.");
+      return;
+    }
 
     const canvas = document.createElement("canvas");
     canvas.width = cw;
@@ -218,18 +256,28 @@ export default function ImageEditor() {
       cw, ch,
       0, 0, cw, ch,
     );
-    canvas.toBlob((blob) => blob && downloadBlob(blob, `${fileName}_cropped.png`), "image/png");
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        alert("Crop export failed. Check browser console for details.");
+        return;
+      }
+      downloadBlob(blob, `${fileName}_cropped_${cw}x${ch}.png`);
+    }, "image/png");
   };
 
   const handleWidthChange = (val: number) => {
-    setResizeW(val);
+    if (!val || isNaN(val) || val < 1 || !isFinite(val)) return;
+    const clamped = Math.min(8000, Math.round(val));
+    setResizeW(clamped);
     if (keepAspect && originalSize.w > 0)
-      setResizeH(Math.round(val * (originalSize.h / originalSize.w)));
+      setResizeH(Math.min(8000, Math.round(clamped * (originalSize.h / originalSize.w))));
   };
   const handleHeightChange = (val: number) => {
-    setResizeH(val);
+    if (!val || isNaN(val) || val < 1 || !isFinite(val)) return;
+    const clamped = Math.min(8000, Math.round(val));
+    setResizeH(clamped);
     if (keepAspect && originalSize.h > 0)
-      setResizeW(Math.round(val * (originalSize.w / originalSize.h)));
+      setResizeW(Math.min(8000, Math.round(clamped * (originalSize.w / originalSize.h))));
   };
 
   const resetAll = () => {
@@ -239,7 +287,12 @@ export default function ImageEditor() {
     setFlipV(false);
     setCrop(undefined);
     setCompletedCrop(undefined);
-    if (originalSize.w) { setResizeW(originalSize.w); setResizeH(originalSize.h); }
+    if (originalSize.w) {
+      setResizeW(originalSize.w);
+      setResizeH(originalSize.h);
+      setWidthStr(String(originalSize.w));
+      setHeightStr(String(originalSize.h));
+    }
   };
 
   // ── Upload screen ──────────────────────────────────────────────────────────
@@ -271,14 +324,15 @@ export default function ImageEditor() {
   return (
     <div className="flex gap-4 min-h-[520px]">
 
-      {/* Hidden source image (never displayed — used only for canvas rendering) */}
+      {/* Hidden source image — used only as drawImage source for the canvas.
+          Do NOT add crossOrigin here: blob URLs are same-origin and crossOrigin
+          causes canvas tainting in Firefox/Safari, making toBlob() return null. */}
       <img
         ref={imgRef}
         src={src}
         alt=""
         onLoad={onImageLoad}
         className="hidden"
-        crossOrigin="anonymous"
       />
 
       {/* ── LEFT SIDEBAR ── */}
@@ -353,14 +407,24 @@ export default function ImageEditor() {
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-[10px] text-muted-foreground">Width</label>
-                <input type="number" value={resizeW} min={1} max={8000}
-                  onChange={(e) => handleWidthChange(Number(e.target.value))}
+                <input type="number" value={widthStr} min={1} max={8000}
+                  onChange={(e) => {
+                    setWidthStr(e.target.value);
+                    const v = parseInt(e.target.value, 10);
+                    if (!isNaN(v) && v >= 1) handleWidthChange(v);
+                  }}
+                  onBlur={() => setWidthStr(String(resizeW))}
                   className="w-full mt-0.5 px-2 py-1.5 rounded-md bg-background border border-border/60 text-xs focus:outline-none focus:ring-1 focus:ring-primary" />
               </div>
               <div>
                 <label className="text-[10px] text-muted-foreground">Height</label>
-                <input type="number" value={resizeH} min={1} max={8000}
-                  onChange={(e) => handleHeightChange(Number(e.target.value))}
+                <input type="number" value={heightStr} min={1} max={8000}
+                  onChange={(e) => {
+                    setHeightStr(e.target.value);
+                    const v = parseInt(e.target.value, 10);
+                    if (!isNaN(v) && v >= 1) handleHeightChange(v);
+                  }}
+                  onBlur={() => setHeightStr(String(resizeH))}
                   className="w-full mt-0.5 px-2 py-1.5 rounded-md bg-background border border-border/60 text-xs focus:outline-none focus:ring-1 focus:ring-primary" />
               </div>
             </div>
