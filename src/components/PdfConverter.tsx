@@ -406,7 +406,7 @@ export default function PdfConverter() {
         {isConverting ? (
           <>
             <Loader2 className="h-4 w-4 animate-spin" />
-            Converting {pendingCount} file{pendingCount > 1 ? "s" : ""}…
+            Converting…
           </>
         ) : (
           <>
