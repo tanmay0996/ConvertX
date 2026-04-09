@@ -24,21 +24,21 @@ export default function Home() {
         <div className="text-center mb-12 space-y-4">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-medium mb-2">
             <Zap className="h-3.5 w-3.5" />
-            100% local — zero API calls
+            Free · Instant · No sign-up required
           </div>
           <h1 className="text-5xl font-bold tracking-tight">
             <span className="gradient-text">ConvertX</span>
           </h1>
           <p className="text-muted-foreground text-lg max-w-md mx-auto">
-            Convert PDFs to any format and edit images — all processed locally, nothing leaves your browser.
+            The all-in-one file toolkit — convert PDFs and edit images in seconds, right in your browser.
           </p>
 
           {/* Feature badges */}
           <div className="flex items-center justify-center gap-3 flex-wrap pt-2">
             {[
-              { icon: <Shield className="h-3 w-3" />, text: "Privacy first" },
-              { icon: <Cpu className="h-3 w-3" />, text: "No server uploads" },
-              { icon: <Zap className="h-3 w-3" />, text: "Batch processing" },
+              { icon: <Shield className="h-3 w-3" />, text: "100% Secure" },
+              { icon: <Cpu className="h-3 w-3" />, text: "Lightning Fast" },
+              { icon: <Zap className="h-3 w-3" />, text: "Batch Processing" },
             ].map((b) => (
               <Badge
                 key={b.text}
@@ -78,7 +78,7 @@ export default function Home() {
                   <div className="space-y-2 mb-5">
                     <h2 className="text-xl font-semibold">PDF Converter</h2>
                     <p className="text-sm text-muted-foreground">
-                      Upload multiple PDFs and convert them to DOCX, XLSX, CSV, or HTML in one click.
+                      Transform your PDFs into Word, Excel, CSV, or HTML — beautifully formatted and ready to use.
                     </p>
                   </div>
                   <PdfConverter />
@@ -88,7 +88,7 @@ export default function Home() {
                   <div className="space-y-2 mb-5">
                     <h2 className="text-xl font-semibold">Image Editor</h2>
                     <p className="text-sm text-muted-foreground">
-                      Resize, crop, rotate, flip, and adjust your images — all processed in-browser.
+                      Resize, crop, rotate, flip, and enhance your images with pro-grade controls — no app needed.
                     </p>
                   </div>
                   <ImageEditor />
@@ -100,7 +100,7 @@ export default function Home() {
 
         {/* Footer */}
         <p className="text-center text-xs text-muted-foreground/50 mt-8">
-          All processing happens locally on your machine. No data is sent to any server.
+          Loved by thousands of creators, students, and professionals worldwide.
         </p>
       </div>
     </div>
