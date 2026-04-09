@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# custom exclusions
+*.md
+!README.md
+.claude/
+*.claude
+*.py
