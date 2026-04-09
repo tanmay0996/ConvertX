@@ -4,20 +4,19 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import { Slider } from "@/components/ui/slider";
-import { Separator } from "@/components/ui/separator";
 import {
-  Upload, Download, RotateCcw, Crop as CropIcon, ZoomIn, ZoomOut,
+  Upload, Download, RotateCcw, Crop as CropIcon, ZoomIn,
   Sun, Contrast, Droplets, Palette, FlipHorizontal, FlipVertical,
-  RotateCw, ImageIcon, X, Sliders, RefreshCcw,
+  RotateCw, ImageIcon, X, Sliders, RefreshCcw, Link2, Unlink2,
 } from "lucide-react";
 
 interface Adjustments {
-  brightness: number; // 0-200 (100 = normal)
-  contrast: number;   // 0-200
-  saturation: number; // 0-200
-  hue: number;        // 0-360
-  blur: number;       // 0-20
-  opacity: number;    // 10-100
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  hue: number;
+  blur: number;
+  opacity: number;
 }
 
 const DEFAULT_ADJ: Adjustments = {
@@ -43,8 +42,6 @@ function downloadBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
-/** Draw image onto a canvas with all effects applied, returns the canvas.
- *  Returns null if dimensions are invalid (0, NaN, Infinity). */
 function renderToCanvas(
   img: HTMLImageElement,
   outW: number,
@@ -54,20 +51,13 @@ function renderToCanvas(
   flipH: boolean,
   flipV: boolean,
 ): HTMLCanvasElement | null {
-  // Guard: reject zero, negative, NaN, or non-finite dimensions
-  if (!outW || !outH || outW < 1 || outH < 1 || !isFinite(outW) || !isFinite(outH)) {
-    return null;
-  }
+  if (!outW || !outH || outW < 1 || outH < 1 || !isFinite(outW) || !isFinite(outH)) return null;
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(outW);
   canvas.height = Math.round(outH);
   const ctx = canvas.getContext("2d")!;
-
-  // Background (transparent checkerboard handled by container; canvas is transparent)
   ctx.clearRect(0, 0, outW, outH);
-
-  // Apply CSS filters via canvas filter API
-  const filter = [
+  ctx.filter = [
     `brightness(${adj.brightness}%)`,
     `contrast(${adj.contrast}%)`,
     `saturate(${adj.saturation}%)`,
@@ -75,17 +65,57 @@ function renderToCanvas(
     `blur(${adj.blur}px)`,
     `opacity(${adj.opacity}%)`,
   ].join(" ");
-  ctx.filter = filter;
-
-  // Transform: rotate + flip around center
   ctx.save();
   ctx.translate(outW / 2, outH / 2);
   ctx.rotate((rotation * Math.PI) / 180);
   ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
   ctx.drawImage(img, -outW / 2, -outH / 2, outW, outH);
   ctx.restore();
-
   return canvas;
+}
+
+// ── Tiny icon button ──────────────────────────────────────────────────────────
+function IconBtn({
+  onClick, title, active = false, danger = false, children,
+}: {
+  onClick: () => void; title: string; active?: boolean; danger?: boolean; children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`flex items-center justify-center h-8 w-8 rounded-lg transition-all duration-150
+        ${danger
+          ? "text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+          : active
+            ? "bg-primary/20 text-primary"
+            : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+        }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ── Tool toggle button ────────────────────────────────────────────────────────
+function ToolBtn({
+  id, active, onClick, icon, label,
+}: {
+  id: string; active: boolean; onClick: () => void; icon: React.ReactNode; label: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium transition-all duration-150
+        ${active
+          ? "bg-primary/20 text-primary ring-1 ring-primary/30"
+          : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+        }`}
+    >
+      {icon}
+      {label}
+    </button>
+  );
 }
 
 export default function ImageEditor() {
@@ -104,16 +134,14 @@ export default function ImageEditor() {
   const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
   const [isDragging, setIsDragging] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
-  // Local string state so users can freely edit the number inputs without snapping
   const [widthStr, setWidthStr] = useState("800");
   const [heightStr, setHeightStr] = useState("600");
 
-  const imgRef = useRef<HTMLImageElement>(null);     // hidden source <img>
-  const cropImgRef = useRef<HTMLImageElement>(null); // img inside ReactCrop
-  const canvasRef = useRef<HTMLCanvasElement>(null); // visible preview canvas
+  const imgRef = useRef<HTMLImageElement>(null);
+  const cropImgRef = useRef<HTMLImageElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // ── Compute CSS filter string for the preview canvas ─────────────────────
   const cssFilter = [
     `brightness(${adj.brightness}%)`,
     `contrast(${adj.contrast}%)`,
@@ -123,25 +151,20 @@ export default function ImageEditor() {
     `opacity(${adj.opacity}%)`,
   ].join(" ");
 
-  // Sync string inputs when resizeW/resizeH change from outside (presets, image load)
   useEffect(() => { setWidthStr(String(resizeW)); }, [resizeW]);
   useEffect(() => { setHeightStr(String(resizeH)); }, [resizeH]);
 
-  // ── Re-render preview canvas whenever any setting changes ──────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     const img = imgRef.current;
     if (!canvas || !img || !imgLoaded) return;
-
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Preview uses resizeW/resizeH aspect so the canvas visually reflects output size
     const outW = resizeW > 0 ? resizeW : originalSize.w;
     const outH = resizeH > 0 ? resizeH : originalSize.h;
-
-    const maxH = 480;
-    const maxW = canvas.parentElement?.clientWidth ?? 600;
+    const maxH = 460;
+    const maxW = canvas.parentElement?.clientWidth ?? 700;
     const scale = Math.min(maxW / outW, maxH / outH, 1);
     const displayW = Math.round(outW * scale);
     const displayH = Math.round(outH * scale);
@@ -151,7 +174,6 @@ export default function ImageEditor() {
     canvas.style.width = `${displayW}px`;
     canvas.style.height = `${displayH}px`;
 
-    // Draw image without ctx.filter (use CSS filter on the element instead)
     ctx.clearRect(0, 0, displayW, displayH);
     ctx.save();
     ctx.translate(displayW / 2, displayH / 2);
@@ -198,28 +220,19 @@ export default function ImageEditor() {
     }
   }, [activeTool]);
 
-  // ── Download: full-res with all effects ────────────────────────────────────
   const downloadEdited = () => {
     const img = imgRef.current;
     if (!img || !imgLoaded) return;
-
     const w = Math.round(resizeW);
     const h = Math.round(resizeH);
     if (w < 1 || h < 1 || !isFinite(w) || !isFinite(h)) {
-      alert(`Invalid dimensions: ${w}×${h}. Please enter values between 1 and 8000.`);
+      alert(`Invalid dimensions: ${w}×${h}.`);
       return;
     }
-
     const canvas = renderToCanvas(img, w, h, adj, rotation, flipH, flipV);
-    if (!canvas) {
-      alert(`Export failed: could not create canvas at ${w}×${h}px.`);
-      return;
-    }
+    if (!canvas) { alert(`Export failed at ${w}×${h}px.`); return; }
     canvas.toBlob((blob) => {
-      if (!blob) {
-        alert("Export failed: the image could not be encoded. Check browser console for details.");
-        return;
-      }
+      if (!blob) { alert("Export failed: could not encode image."); return; }
       downloadBlob(blob, `${fileName}_${w}x${h}.png`);
     }, "image/png");
   };
@@ -231,36 +244,15 @@ export default function ImageEditor() {
     const scaleY = img.naturalHeight / img.height;
     const cw = Math.round(completedCrop.width * scaleX);
     const ch = Math.round(completedCrop.height * scaleY);
-
-    if (cw < 1 || ch < 1) {
-      alert("Crop region is too small. Please select a larger area.");
-      return;
-    }
-
+    if (cw < 1 || ch < 1) { alert("Crop region too small."); return; }
     const canvas = document.createElement("canvas");
     canvas.width = cw;
     canvas.height = ch;
     const ctx = canvas.getContext("2d")!;
-    const filter = [
-      `brightness(${adj.brightness}%)`,
-      `contrast(${adj.contrast}%)`,
-      `saturate(${adj.saturation}%)`,
-      `hue-rotate(${adj.hue}deg)`,
-      `blur(${adj.blur}px)`,
-      `opacity(${adj.opacity}%)`,
-    ].join(" ");
-    ctx.filter = filter;
-    ctx.drawImage(
-      img,
-      completedCrop.x * scaleX, completedCrop.y * scaleY,
-      cw, ch,
-      0, 0, cw, ch,
-    );
+    ctx.filter = cssFilter;
+    ctx.drawImage(img, completedCrop.x * scaleX, completedCrop.y * scaleY, cw, ch, 0, 0, cw, ch);
     canvas.toBlob((blob) => {
-      if (!blob) {
-        alert("Crop export failed. Check browser console for details.");
-        return;
-      }
+      if (!blob) { alert("Crop export failed."); return; }
       downloadBlob(blob, `${fileName}_cropped_${cw}x${ch}.png`);
     }, "image/png");
   };
@@ -295,6 +287,8 @@ export default function ImageEditor() {
     }
   };
 
+  const toggleTool = (t: ActiveTool) => setActiveTool(a => a === t ? null : t);
+
   // ── Upload screen ──────────────────────────────────────────────────────────
   if (!src) {
     return (
@@ -303,277 +297,250 @@ export default function ImageEditor() {
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
         onClick={() => inputRef.current?.click()}
-        className={`flex flex-col items-center justify-center gap-5 p-16 rounded-2xl border-2 border-dashed cursor-pointer transition-all duration-300
-          ${isDragging ? "border-accent bg-accent/10 scale-[1.01] drop-zone-active"
-            : "border-border/40 bg-muted/20 hover:border-accent/40 hover:bg-muted/30"}`}
+        className={`flex flex-col items-center justify-center gap-4 py-20 rounded-2xl border-2 border-dashed cursor-pointer transition-all duration-300
+          ${isDragging
+            ? "border-primary/60 bg-primary/5 scale-[1.01]"
+            : "border-border/30 bg-muted/10 hover:border-border/50 hover:bg-muted/20"}`}
       >
         <input ref={inputRef} type="file" accept="image/*" className="hidden"
           onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
-        <div className={`p-5 rounded-2xl transition-all ${isDragging ? "bg-accent/20 scale-110" : "bg-muted/50"}`}>
-          <ImageIcon className={`h-10 w-10 ${isDragging ? "text-accent" : "text-muted-foreground"}`} />
+        <div className={`p-4 rounded-2xl transition-all ${isDragging ? "bg-primary/15" : "bg-muted/40"}`}>
+          <ImageIcon className={`h-8 w-8 ${isDragging ? "text-primary" : "text-muted-foreground/60"}`} />
         </div>
-        <div className="text-center">
-          <p className="font-semibold text-lg">{isDragging ? "Drop your image" : "Upload an image"}</p>
-          <p className="text-sm text-muted-foreground mt-1">PNG, JPG, WebP, GIF — drag & drop or click</p>
+        <div className="text-center space-y-1">
+          <p className="font-medium text-foreground/80">
+            {isDragging ? "Drop to open" : "Drop an image or click to browse"}
+          </p>
+          <p className="text-xs text-muted-foreground/50">PNG · JPG · WebP · GIF</p>
         </div>
       </div>
     );
   }
 
-  // ── Editor layout ──────────────────────────────────────────────────────────
+  // ── Editor ─────────────────────────────────────────────────────────────────
+  const scalePercent = originalSize.w ? Math.round((resizeW / originalSize.w) * 100) : 100;
+  const isResized = resizeW !== originalSize.w || resizeH !== originalSize.h;
+
   return (
-    <div className="flex gap-4 min-h-[520px]">
+    <div className="flex flex-col gap-2">
 
-      {/* Hidden source image — used only as drawImage source for the canvas.
-          Do NOT add crossOrigin here: blob URLs are same-origin and crossOrigin
-          causes canvas tainting in Firefox/Safari, making toBlob() return null. */}
-      <img
-        ref={imgRef}
-        src={src}
-        alt=""
-        onLoad={onImageLoad}
-        className="hidden"
-      />
+      {/* Hidden source image */}
+      <img ref={imgRef} src={src} alt="" onLoad={onImageLoad} className="hidden" />
+      <input ref={inputRef} type="file" accept="image/*" className="hidden"
+        onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
 
-      {/* ── LEFT SIDEBAR ── */}
-      <div className="w-[240px] flex-shrink-0 flex flex-col gap-3">
+      {/* ── TOOLBAR ── */}
+      <div className="flex items-center gap-1 px-1 py-1 rounded-xl bg-muted/20 border border-border/30 backdrop-blur-sm">
 
         {/* File info */}
-        <div className="px-3 py-2.5 rounded-xl bg-muted/30 border border-border/40">
-          <p className="text-xs font-medium text-foreground truncate">{fileName}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">{originalSize.w} × {originalSize.h} px</p>
+        <div className="flex items-center gap-2 px-2 mr-1 min-w-0">
+          <ImageIcon className="h-3.5 w-3.5 text-muted-foreground/50 flex-shrink-0" />
+          <span className="text-xs font-medium text-foreground/70 truncate max-w-[100px]">{fileName}</span>
+          <span className="text-[10px] text-muted-foreground/40 font-mono flex-shrink-0">
+            {originalSize.w}×{originalSize.h}
+          </span>
         </div>
 
-        {/* Tool selector */}
-        <div className="flex flex-col gap-1.5">
-          <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold px-1">Tools</p>
-          {([
-            { id: "resize" as ActiveTool, icon: <ZoomIn className="h-4 w-4" />,   label: "Resize" },
-            { id: "crop"   as ActiveTool, icon: <CropIcon className="h-4 w-4" />, label: "Crop" },
-            { id: "adjust" as ActiveTool, icon: <Sliders className="h-4 w-4" />,  label: "Adjust" },
-          ]).map((tool) => (
-            <button key={tool.id}
-              onClick={() => setActiveTool(activeTool === tool.id ? null : tool.id)}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all w-full text-left
-                ${activeTool === tool.id
-                  ? "bg-primary/15 text-primary border border-primary/30"
-                  : "bg-muted/30 text-muted-foreground border border-transparent hover:bg-muted/50 hover:text-foreground"}`}
+        <div className="h-4 w-px bg-border/40 mx-1" />
+
+        {/* Tool toggles */}
+        <ToolBtn id="resize" active={activeTool === "resize"} onClick={() => toggleTool("resize")}
+          icon={<ZoomIn className="h-3.5 w-3.5" />} label="Resize" />
+        <ToolBtn id="crop" active={activeTool === "crop"} onClick={() => toggleTool("crop")}
+          icon={<CropIcon className="h-3.5 w-3.5" />} label="Crop" />
+        <ToolBtn id="adjust" active={activeTool === "adjust"} onClick={() => toggleTool("adjust")}
+          icon={<Sliders className="h-3.5 w-3.5" />} label="Adjust" />
+
+        <div className="h-4 w-px bg-border/40 mx-1" />
+
+        {/* Transforms */}
+        <IconBtn onClick={() => setRotation(r => r - 90)} title="Rotate left">
+          <RotateCcw className="h-3.5 w-3.5" />
+        </IconBtn>
+        <IconBtn onClick={() => setRotation(r => r + 90)} title="Rotate right">
+          <RotateCw className="h-3.5 w-3.5" />
+        </IconBtn>
+        <IconBtn onClick={() => setFlipH(f => !f)} title="Flip horizontal" active={flipH}>
+          <FlipHorizontal className="h-3.5 w-3.5" />
+        </IconBtn>
+        <IconBtn onClick={() => setFlipV(f => !f)} title="Flip vertical" active={flipV}>
+          <FlipVertical className="h-3.5 w-3.5" />
+        </IconBtn>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Actions */}
+        <button
+          onClick={downloadEdited}
+          className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary/90 hover:bg-primary text-white text-xs font-medium transition-all"
+        >
+          <Download className="h-3.5 w-3.5" />
+          Download PNG
+        </button>
+
+        <div className="h-4 w-px bg-border/40 mx-0.5" />
+
+        <IconBtn onClick={resetAll} title="Reset all">
+          <RefreshCcw className="h-3.5 w-3.5" />
+        </IconBtn>
+        <IconBtn onClick={() => inputRef.current?.click()} title="Change image">
+          <Upload className="h-3.5 w-3.5" />
+        </IconBtn>
+        <IconBtn onClick={() => { setSrc(null); setCrop(undefined); setActiveTool(null); setImgLoaded(false); }}
+          title="Close" danger>
+          <X className="h-3.5 w-3.5" />
+        </IconBtn>
+      </div>
+
+      {/* ── RESIZE PANEL ── */}
+      {activeTool === "resize" && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-muted/15 border border-border/25 flex-wrap">
+
+          {/* Dimension inputs */}
+          <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-0.5">
+              <label className="text-[9px] uppercase tracking-wider text-muted-foreground/50">W</label>
+              <input type="number" value={widthStr} min={1} max={8000}
+                onChange={(e) => {
+                  setWidthStr(e.target.value);
+                  const v = parseInt(e.target.value, 10);
+                  if (!isNaN(v) && v >= 1) handleWidthChange(v);
+                }}
+                onBlur={() => setWidthStr(String(resizeW))}
+                className="w-20 px-2 py-1 rounded-lg bg-background/60 border border-border/50 text-xs font-mono text-center focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50 transition-all" />
+            </div>
+
+            <button
+              onClick={() => setKeepAspect(k => !k)}
+              title={keepAspect ? "Unlock aspect ratio" : "Lock aspect ratio"}
+              className={`mt-4 p-1 rounded-md transition-all ${keepAspect ? "text-primary" : "text-muted-foreground/40 hover:text-muted-foreground"}`}
             >
-              {tool.icon}
-              {tool.label}
-              {activeTool === tool.id && <div className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />}
+              {keepAspect ? <Link2 className="h-3.5 w-3.5" /> : <Unlink2 className="h-3.5 w-3.5" />}
             </button>
-          ))}
-        </div>
 
-        {/* Transform */}
-        <div className="flex flex-col gap-1.5">
-          <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold px-1">Transform</p>
-          <div className="grid grid-cols-2 gap-1.5">
-            {[
-              { icon: <RotateCcw className="h-3.5 w-3.5" />,      label: "Rotate L", action: () => setRotation(r => r - 90) },
-              { icon: <RotateCw className="h-3.5 w-3.5" />,        label: "Rotate R", action: () => setRotation(r => r + 90) },
-              { icon: <FlipHorizontal className="h-3.5 w-3.5" />,  label: "Flip H",   action: () => setFlipH(f => !f) },
-              { icon: <FlipVertical className="h-3.5 w-3.5" />,    label: "Flip V",   action: () => setFlipV(f => !f) },
-            ].map((btn) => (
-              <button key={btn.label} onClick={btn.action} title={btn.label}
-                className="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-muted/30 border border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all text-[10px]">
-                {btn.icon}{btn.label}
+            <div className="flex flex-col gap-0.5">
+              <label className="text-[9px] uppercase tracking-wider text-muted-foreground/50">H</label>
+              <input type="number" value={heightStr} min={1} max={8000}
+                onChange={(e) => {
+                  setHeightStr(e.target.value);
+                  const v = parseInt(e.target.value, 10);
+                  if (!isNaN(v) && v >= 1) handleHeightChange(v);
+                }}
+                onBlur={() => setHeightStr(String(resizeH))}
+                className="w-20 px-2 py-1 rounded-lg bg-background/60 border border-border/50 text-xs font-mono text-center focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50 transition-all" />
+            </div>
+          </div>
+
+          <div className="h-4 w-px bg-border/40" />
+
+          {/* Presets */}
+          <div className="flex items-center gap-1">
+            {[{ l: "¼×", s: 0.25 }, { l: "½×", s: 0.5 }, { l: "¾×", s: 0.75 }, { l: "1×", s: 1 }, { l: "2×", s: 2 }].map((p) => (
+              <button key={p.l}
+                onClick={() => { setResizeW(Math.round(originalSize.w * p.s)); setResizeH(Math.round(originalSize.h * p.s)); }}
+                className={`h-7 px-2.5 rounded-md text-[11px] font-medium transition-all border
+                  ${Math.abs(scalePercent - p.s * 100) < 1
+                    ? "bg-primary/15 border-primary/30 text-primary"
+                    : "border-border/40 text-muted-foreground hover:border-border/70 hover:text-foreground"}`}>
+                {p.l}
               </button>
             ))}
           </div>
-          {(rotation !== 0 || flipH || flipV) && (
-            <p className="text-[10px] text-primary/70 text-center">
-              {rotation !== 0 && `${((rotation % 360) + 360) % 360}°`}
-              {flipH && " · H-flip"}
-              {flipV && " · V-flip"}
-            </p>
-          )}
-        </div>
 
-        {/* ── RESIZE PANEL ── */}
-        {activeTool === "resize" && (
-          <div className="flex flex-col gap-3 p-3 rounded-xl bg-muted/20 border border-border/40">
-            <p className="text-xs font-semibold text-foreground">Resize Output</p>
+          <div className="h-4 w-px bg-border/40" />
 
-            {/* Output size indicator */}
-            <div className="flex items-center justify-center gap-1 py-2 rounded-lg bg-primary/10 border border-primary/20">
-              <span className="text-sm font-mono font-bold text-primary">{resizeW}</span>
-              <span className="text-xs text-muted-foreground">×</span>
-              <span className="text-sm font-mono font-bold text-primary">{resizeH}</span>
-              <span className="text-xs text-muted-foreground ml-1">px</span>
-            </div>
+          {/* Info */}
+          <div className="flex items-center gap-3 text-[11px] text-muted-foreground/60">
+            <span className="font-mono">{originalSize.w}×{originalSize.h} <span className="text-muted-foreground/40">orig</span></span>
+            <span className={`font-mono font-medium ${isResized ? "text-primary/80" : ""}`}>
+              {resizeW}×{resizeH} <span className="text-muted-foreground/40">{scalePercent}%</span>
+            </span>
+          </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] text-muted-foreground">Width</label>
-                <input type="number" value={widthStr} min={1} max={8000}
-                  onChange={(e) => {
-                    setWidthStr(e.target.value);
-                    const v = parseInt(e.target.value, 10);
-                    if (!isNaN(v) && v >= 1) handleWidthChange(v);
-                  }}
-                  onBlur={() => setWidthStr(String(resizeW))}
-                  className="w-full mt-0.5 px-2 py-1.5 rounded-md bg-background border border-border/60 text-xs focus:outline-none focus:ring-1 focus:ring-primary" />
-              </div>
-              <div>
-                <label className="text-[10px] text-muted-foreground">Height</label>
-                <input type="number" value={heightStr} min={1} max={8000}
-                  onChange={(e) => {
-                    setHeightStr(e.target.value);
-                    const v = parseInt(e.target.value, 10);
-                    if (!isNaN(v) && v >= 1) handleHeightChange(v);
-                  }}
-                  onBlur={() => setHeightStr(String(resizeH))}
-                  className="w-full mt-0.5 px-2 py-1.5 rounded-md bg-background border border-border/60 text-xs focus:outline-none focus:ring-1 focus:ring-primary" />
-              </div>
-            </div>
-
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input type="checkbox" checked={keepAspect} onChange={(e) => setKeepAspect(e.target.checked)} className="rounded accent-purple-500" />
-              <span className="text-[10px] text-muted-foreground">Lock aspect ratio</span>
-            </label>
-
-            {/* Quick scale presets */}
-            <div className="space-y-1">
-              <p className="text-[10px] text-muted-foreground">Quick scale</p>
-              <div className="grid grid-cols-4 gap-1">
-                {[{ l: "¼×", s: 0.25 }, { l: "½×", s: 0.5 }, { l: "¾×", s: 0.75 }, { l: "2×", s: 2 }].map((p) => (
-                  <button key={p.l}
-                    onClick={() => { setResizeW(Math.round(originalSize.w * p.s)); setResizeH(Math.round(originalSize.h * p.s)); }}
-                    className="py-1 text-[10px] rounded bg-background border border-border/60 hover:border-primary/60 hover:text-primary transition-all">
-                    {p.l}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Size comparison */}
-            <div className="text-[10px] text-muted-foreground space-y-0.5">
-              <div className="flex justify-between">
-                <span>Original</span>
-                <span className="font-mono">{originalSize.w}×{originalSize.h}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Output</span>
-                <span className={`font-mono ${resizeW !== originalSize.w || resizeH !== originalSize.h ? "text-primary" : ""}`}>
-                  {resizeW}×{resizeH}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span>Scale</span>
-                <span className="font-mono">
-                  {originalSize.w ? `${((resizeW / originalSize.w) * 100).toFixed(0)}%` : "—"}
-                </span>
-              </div>
-            </div>
-
+          <div className="ml-auto">
             <button onClick={downloadEdited}
-              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 text-white text-xs font-medium hover:from-blue-500 hover:to-blue-400 transition-all">
+              className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-medium transition-all">
               <Download className="h-3.5 w-3.5" />
               Export {resizeW}×{resizeH}
             </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* ── ADJUST PANEL ── */}
-        {activeTool === "adjust" && (
-          <div className="flex flex-col gap-2.5 p-3 rounded-xl bg-muted/20 border border-border/40 overflow-y-auto max-h-[360px]">
-            <p className="text-xs font-semibold text-foreground">Adjustments</p>
+      {/* ── ADJUST PANEL ── */}
+      {activeTool === "adjust" && (
+        <div className="px-4 py-3 rounded-xl bg-muted/15 border border-border/25">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-3">
             {([
               { label: "Brightness", icon: <Sun className="h-3 w-3" />,       key: "brightness" as keyof Adjustments, min: 0,  max: 200, unit: "%" },
               { label: "Contrast",   icon: <Contrast className="h-3 w-3" />,  key: "contrast"   as keyof Adjustments, min: 0,  max: 200, unit: "%" },
               { label: "Saturation", icon: <Droplets className="h-3 w-3" />,  key: "saturation" as keyof Adjustments, min: 0,  max: 200, unit: "%" },
-              { label: "Hue Rotate", icon: <Palette className="h-3 w-3" />,   key: "hue"        as keyof Adjustments, min: 0,  max: 360, unit: "°"  },
-              { label: "Blur",       icon: <ZoomOut className="h-3 w-3" />,   key: "blur"       as keyof Adjustments, min: 0,  max: 20,  unit: "px" },
+              { label: "Hue",        icon: <Palette className="h-3 w-3" />,   key: "hue"        as keyof Adjustments, min: 0,  max: 360, unit: "°" },
+              { label: "Blur",       icon: <Sun className="h-3 w-3" />,       key: "blur"       as keyof Adjustments, min: 0,  max: 20,  unit: "px" },
               { label: "Opacity",    icon: <Sun className="h-3 w-3" />,       key: "opacity"    as keyof Adjustments, min: 10, max: 100, unit: "%" },
             ]).map(({ label, icon, key, min, max, unit }) => {
               const val = adj[key];
-              const isModified = val !== DEFAULT_ADJ[key];
+              const modified = val !== DEFAULT_ADJ[key];
               return (
-                <div key={label} className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <div className={`flex items-center gap-1.5 text-[11px] ${isModified ? "text-primary" : "text-muted-foreground"}`}>
-                      {icon}
-                      <span>{label}</span>
-                    </div>
-                    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${isModified ? "bg-primary/15 text-primary" : "text-foreground/50"}`}>
-                      {val}{unit}
-                    </span>
+                <div key={label} className="flex items-center gap-3 min-w-0">
+                  <div className={`flex items-center gap-1.5 w-24 flex-shrink-0 text-[11px] ${modified ? "text-primary/80" : "text-muted-foreground/60"}`}>
+                    {icon}
+                    <span>{label}</span>
                   </div>
                   <Slider min={min} max={max} value={val}
                     onValueChange={(v) => setAdj(a => ({ ...a, [key]: Array.isArray(v) ? (v as number[])[0] : (v as number) }))}
-                    className="cursor-pointer" />
+                    className="flex-1 cursor-pointer" />
+                  <span className={`text-[10px] font-mono w-10 text-right flex-shrink-0 ${modified ? "text-primary/80" : "text-muted-foreground/40"}`}>
+                    {val}{unit}
+                  </span>
+                  {modified && (
+                    <button onClick={() => setAdj(a => ({ ...a, [key]: DEFAULT_ADJ[key] }))}
+                      className="text-muted-foreground/30 hover:text-muted-foreground transition-colors flex-shrink-0" title="Reset">
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
                 </div>
               );
             })}
+          </div>
+          <div className="mt-3 flex justify-end">
             <button onClick={() => setAdj(DEFAULT_ADJ)}
-              className="w-full mt-1 py-1.5 text-[10px] rounded-md border border-border/60 text-muted-foreground hover:text-foreground hover:border-border transition-all">
-              Reset to defaults
+              className="text-[10px] text-muted-foreground/40 hover:text-muted-foreground transition-colors flex items-center gap-1">
+              <RefreshCcw className="h-3 w-3" /> Reset all
             </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* ── CROP PANEL ── */}
-        {activeTool === "crop" && (
-          <div className="p-3 rounded-xl bg-muted/20 border border-border/40">
-            <p className="text-xs font-semibold text-foreground mb-2">Crop</p>
-            <p className="text-[10px] text-muted-foreground mb-3 leading-relaxed">
-              Drag the handles on the image to select your crop region.
-            </p>
+      {/* ── CROP PANEL ── */}
+      {activeTool === "crop" && (
+        <div className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-muted/15 border border-border/25">
+          <p className="text-xs text-muted-foreground/60">
+            Drag the handles on the image to select a crop region.
             {completedCrop && (
-              <p className="text-[10px] font-mono text-primary mb-2 text-center">
-                {Math.round(completedCrop.width)} × {Math.round(completedCrop.height)} px
-              </p>
+              <span className="ml-2 font-mono text-primary/70">
+                {Math.round(completedCrop.width)} × {Math.round(completedCrop.height)} px selected
+              </span>
             )}
-            <button onClick={downloadCropped} disabled={!completedCrop}
-              className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium transition-all
-                ${completedCrop
-                  ? "bg-gradient-to-r from-violet-600 to-purple-600 text-white hover:from-violet-500 hover:to-purple-500"
-                  : "bg-muted/40 text-muted-foreground cursor-not-allowed"}`}>
-              <Download className="h-3.5 w-3.5" />
-              {completedCrop ? "Export Cropped" : "Select an area first"}
-            </button>
-          </div>
-        )}
-
-        {/* Spacer */}
-        <div className="flex-1" />
-        <Separator className="opacity-30" />
-
-        {/* Bottom actions */}
-        <div className="flex flex-col gap-2">
-          <button onClick={downloadEdited}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white text-sm font-semibold transition-all glow-purple">
-            <Download className="h-4 w-4" />
-            Download PNG
-          </button>
-          <div className="grid grid-cols-2 gap-2">
-            <button onClick={resetAll}
-              className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-muted/40 border border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/60 text-xs transition-all">
-              <RefreshCcw className="h-3.5 w-3.5" /> Reset
-            </button>
-            <button onClick={() => inputRef.current?.click()}
-              className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-muted/40 border border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/60 text-xs transition-all">
-              <Upload className="h-3.5 w-3.5" /> Change
-            </button>
-          </div>
-          <button onClick={() => { setSrc(null); setCrop(undefined); setActiveTool(null); setImgLoaded(false); }}
-            className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-muted/40 border border-border/40 text-muted-foreground hover:text-destructive hover:border-destructive/40 hover:bg-destructive/5 text-xs transition-all">
-            <X className="h-3.5 w-3.5" /> Close
+          </p>
+          <button onClick={downloadCropped} disabled={!completedCrop}
+            className={`flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium transition-all ml-4 flex-shrink-0
+              ${completedCrop
+                ? "bg-violet-600/80 hover:bg-violet-600 text-white"
+                : "bg-muted/30 text-muted-foreground/40 cursor-not-allowed"}`}>
+            <Download className="h-3.5 w-3.5" />
+            {completedCrop ? "Export Cropped" : "No selection"}
           </button>
         </div>
-        <input ref={inputRef} type="file" accept="image/*" className="hidden"
-          onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); }} />
-      </div>
+      )}
 
-      {/* ── RIGHT: IMAGE CANVAS ── */}
-      <div className="flex-1 rounded-2xl border border-border/30 overflow-hidden
-        bg-[repeating-conic-gradient(oklch(0.14_0.01_260)_0%_25%,oklch(0.1_0.01_260)_0%_50%)]
-        bg-[length:16px_16px] flex items-center justify-center min-h-[480px]">
+      {/* ── CANVAS ── */}
+      <div className={`rounded-xl border border-border/20 overflow-hidden flex items-center justify-center min-h-[400px]
+        bg-[repeating-conic-gradient(oklch(0.13_0.01_260)_0%_25%,oklch(0.10_0.01_260)_0%_50%)]
+        bg-[length:20px_20px] transition-all`}>
 
         {activeTool === "crop" ? (
-          /* Crop mode: show actual <img> with ReactCrop overlay */
           <ReactCrop crop={crop} onChange={(c) => setCrop(c)} onComplete={(c) => setCompletedCrop(c)}
             style={{ maxWidth: "100%", maxHeight: "100%" }}>
             <img
@@ -585,15 +552,14 @@ export default function ImageEditor() {
                 if (!imgLoaded) { setOriginalSize({ w, h }); setResizeW(w); setResizeH(h); setImgLoaded(true); }
                 setCrop(centerAspectCrop(w, h, 16 / 9));
               }}
-              className="max-w-full max-h-[480px] object-contain block"
+              className="max-w-full max-h-[460px] object-contain block"
             />
           </ReactCrop>
         ) : (
-          /* Normal mode: canvas-based preview (real-time with all effects) */
           <canvas
             ref={canvasRef}
-            className="max-w-full max-h-[480px] object-contain"
-            style={{ imageRendering: "pixelated", filter: cssFilter }}
+            className="max-w-full max-h-[460px] object-contain"
+            style={{ filter: cssFilter }}
           />
         )}
       </div>
